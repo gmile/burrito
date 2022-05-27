@@ -13,6 +13,7 @@
   * [Mix Release Config Options](#mix-release-config-options)
   * [Build-Time Environment Variables](#build-time-environment-variables)
   * [Application Entry Point](#application-entry-point)
+  * [EPMD-less Releases](#epmd-less-releases)
   * [Maintenance Commands](#maintenance-commands)
 * [Advanced Build Configuration](#advanced-build-configuration)
   * [Build Steps and Phases](#build-steps-and-phases)
@@ -182,6 +183,19 @@ If you wish you retrieve the argv passed to your program by Burrito use this sni
 ```elixir
  args = Burrito.Util.Args.get_arguments() # this returns a list of strings
  ```
+
+#### EPMD-less Releases
+
+If you want to ensure EPDM will never start in your released Burrito application, you must specify a few Erlang VM arguments at boot.
+
+Create a `rel/vm.args.eex` file that will be used in your Mix Release, and add the following content:
+
+```
+-start_epmd false -epmd_module Elixir.Burrito.Util.EpmdShim
+```
+
+This will disable the EPMD deamon entirely, and prevent any kind of Erlang clustering/node distribution. 
+Use this only when you know you'll never need EPMD! The shim module **does not** provide any actual functionality other than stubbing the expected functions.
 
 #### Maintenance Commands
 Binaries built by Burrito include a built-in set of commands for performing maintenance operations against the included application:
