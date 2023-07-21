@@ -16,7 +16,7 @@ defmodule Burrito.Steps.Build.PackAndBuild do
 
     build_args = ["--target=#{build_triplet}"]
 
-    create_metadata_file(context.self_dir, build_args, context.mix_release)
+    create_metadata_file(context.self_dir, context.work_dir, build_args, context.mix_release)
 
     # TODO: Why do we need to do this???
     # This is to bypass a VERY strange bug inside Linux containers...
@@ -25,16 +25,17 @@ defmodule Burrito.Steps.Build.PackAndBuild do
     # File system to suddenly "wake up" to all the files inside it.
     Path.join(context.work_dir, ["/lib", "/.burrito"]) |> File.touch!()
 
+    System.cmd("cargo", ["clean"], cd: Path.join(context.self_dir, "/wrapper"))
     build_result =
-      System.cmd("cargo", ["build"] ++ build_args,
+      System.cmd("cargo", ["build", "--message-format", "short"] ++ build_args,
         cd: Path.join(context.self_dir, "/wrapper"),
         env: [
+          {"__BURRITO", "1"},
           {"__BURRITO_IS_PROD", is_prod(context.target)},
           {"__BURRITO_RELEASE_PATH", context.work_dir},
           {"__BURRITO_RELEASE_NAME", release_name},
           {"__BURRITO_PLUGIN_PATH", plugin_path}
-        ],
-        into: IO.stream()
+        ]
       )
 
     if !options[:no_clean] do
@@ -45,13 +46,13 @@ defmodule Burrito.Steps.Build.PackAndBuild do
       {_, 0} ->
         context
 
-      _ ->
+      {out, code} ->
         Log.error(
           :step,
-          "Burrito failed to wrap up your app! Check the logs for more information."
+          "Burrito failed to wrap up your app! Check the logs for more information. #{inspect(out)}"
         )
 
-        raise "Wrapper build failed"
+        raise "Wrapper build failed, `cargo` exit code: #{code}"
     end
   end
 
@@ -61,15 +62,16 @@ defmodule Burrito.Steps.Build.PackAndBuild do
     Path.join(File.cwd!(), [plugin_path])
   end
 
-  defp create_metadata_file(self_path, args, release) do
+  defp create_metadata_file(self_path, work_dir, args, release) do
     Log.info(:step, "Generating wrapper metadata file...")
 
-    {version_string, 0} = System.cmd("cargo", ["version"], cd: self_path, stderr_to_stdout: true)
+    {version_string, 0} =
+      System.cmd("rustc", ["--version"], cd: self_path, stderr_to_stdout: true)
 
     metadata_map = %{
       app_name: Atom.to_string(release.name),
-      zig_version: version_string |> String.trim(),
-      zig_build_arguments: args,
+      rust_version: version_string |> String.trim(),
+      cargo_build_arguments: args,
       app_version: release.version,
       options: inspect(release.options),
       erts_version: release.erts_version |> to_string()
@@ -77,7 +79,7 @@ defmodule Burrito.Steps.Build.PackAndBuild do
 
     encoded = Jason.encode!(metadata_map)
 
-    Path.join(self_path, ["src/", "_metadata.json"]) |> File.write!(encoded)
+    Path.join(work_dir, ["_metadata.json"]) |> File.write!(encoded)
   end
 
   defp is_prod(%Target{debug?: debug?}) do
@@ -92,14 +94,12 @@ defmodule Burrito.Steps.Build.PackAndBuild do
     Log.info(:step, "Cleaning up...")
 
     out = Path.join(self_path, "wrapper/target")
-    payload = Path.join(self_path, "payload.foilz")
-    compressed_payload = Path.join(self_path, ["src/", "payload.foilz.xz"])
-    metadata = Path.join(self_path, ["src/", "_metadata.json"])
+    payload = Path.join(self_path, "wrapper/payload.foilz")
+    compressed_payload = Path.join(self_path, ["wrapper/", "payload.foilz.xz"])
 
     File.rmdir(out)
     File.rm(payload)
     File.rm(compressed_payload)
-    File.rm(metadata)
 
     :ok
   end
